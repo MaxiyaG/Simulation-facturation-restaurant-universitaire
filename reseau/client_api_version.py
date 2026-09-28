@@ -1,84 +1,64 @@
 # ----- 1 - IMPORTATIONS ------------------------------------
 import socket
-import threading
-from contextlib import asynccontextmanager
+from fastapi import FastAPI, HTTPException
 
-from typing import Annotated
-
-from fastapi import FastAPI, HTTPException, Path
-
-# Exemple d'id client a facturer: 45215252813
+#Exemple d'id client a facturer:45215252813
 
 # ----- 2 - CONSTANTES --------------------------------------
 """
-CONSTANTES LIEES A LA CONNEXION AU SERVEUR
+CONSTANTE LIER A LA CONNEXION AU SERVEUR
 """
-HOST = "localhost"
+HOST = 'localhost'
 PORT = 7470
+client_socket = None
 
+# ----- 3 - FONCTIONS --------------------------------------
+"""
+FONCTION DE VERIFICATION DE L'ID AVANT ENVOIE
+"""
+def check_id(id):
+    if len(id) != 11 or (" " in id):
+        return False
+    return True
 
-# ----- 3 - CLASSES ET FONCTIONS ----------------------------
-class ServeurCantine:
-    """
-    Gère une connexion socket persistante vers le serveur de facturation.
-    Reconnexion automatique si la connexion est perdue.
-    """
+"""
+FONCTION DE CONNEXION AU SERVEUR
+"""
+def connexion():
+    global client_socket
+    client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    client_socket.connect((HOST, PORT))
+    print("Client connecté !")
 
-    def __init__(self, host: str, port: int):
-        self.host = host
-        self.port = port
-        self.sock: socket.socket | None = None
-        self.lock = threading.Lock()  # une seule requête écrit sur le socket à la fois
-
-    def _connect(self):
-        self.close()
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sock.settimeout(5)
-        self.sock.connect((self.host, self.port))
-
-    def close(self):
-        if self.sock:
-            try:
-                self.sock.close()
-            except OSError:
-                pass
-            self.sock = None
-
-    def envoyer_id(self, id_client: str):
-        out = (id_client + "\r\n").encode("utf8")
-        with self.lock:
-            for tentative in range(2):  # 2e tentative = reconnexion
-                try:
-                    if self.sock is None:
-                        self._connect()
-                    self.sock.sendall(out)
-                    return
-                except OSError:
-                    self.close()
-                    if tentative == 1:
-                        raise
-
-
-serveur = ServeurCantine(HOST, PORT)
-
-
-# ----- 4 - API ---------------------------------------------
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    yield
-    serveur.close()
-
-
-app = FastAPI(title="API Cantine", lifespan=lifespan)
-
-
-@app.get("/cantine/{id_client}")
-def envoyer_id(id_client: Annotated[str, Path(pattern=r"^\S{11}$", examples=["45215252813"])]):
-    """Reçoit un ID client via le lien et l'envoie au serveur de facturation."""
+"""
+FONCTION D'ENVOIE DE L'ID AU SERVEUR (RECONNEXION SI LA CONNEXION EST PERDUE)
+"""
+def envoyer_id(id):
+    out = (id+"\r\n").encode("utf8")
     try:
-        serveur.envoyer_id(id_client)
+        if client_socket is None:
+            connexion()
+        client_socket.send(out)
     except OSError:
-        raise HTTPException(status_code=503, detail="Serveur de facturation injoignable")
-    return {"id": id_client, "statut": "envoyé"}
+        connexion()
+        client_socket.send(out)
 
+# ----- 4 - PROGRAMME PRINCIPAL ------------------------------
+"""
+API : RECOIT L'ID PAR LE LIEN ET L'ENVOIE AU SERVEUR
+"""
+app = FastAPI()
+
+@app.get("/cantine/{id}")
+async def cantine(id: str):
+    if not check_id(id):
+        raise HTTPException(status_code=422, detail="ID Incorrect, veuillez entrer un ID de taille 11")
+    try:
+        envoyer_id(id)
+    except OSError:
+        raise HTTPException(status_code=503, detail="Connection echouée")
+    print("ID: ", id, " a étais envoyé \n")
+    return {"id": id, "statut": "envoyé"}
+
+# Lancement : uvicorn main:app --reload
 # Exemple http://localhost:8000/cantine/45215252813
