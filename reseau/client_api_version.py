@@ -3,8 +3,9 @@ import socket
 import threading
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+from typing import Annotated
+
+from fastapi import FastAPI, HTTPException, Path
 
 # Exemple d'id client a facturer: 45215252813
 
@@ -61,10 +62,6 @@ class ServeurCantine:
 serveur = ServeurCantine(HOST, PORT)
 
 
-class IdClient(BaseModel):
-    id: str = Field(..., pattern=r"^\S{11}$", examples=["45215252813"])
-
-
 # ----- 4 - API ---------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -75,12 +72,13 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="API Cantine", lifespan=lifespan)
 
 
-@app.post("/cantine", status_code=201)
-def envoyer_id(payload: IdClient):
-    """Reçoit un ID client et l'envoie au serveur de facturation."""
+@app.get("/cantine/{id_client}")
+def envoyer_id(id_client: Annotated[str, Path(pattern=r"^\S{11}$", examples=["45215252813"])]):
+    """Reçoit un ID client via le lien et l'envoie au serveur de facturation."""
     try:
-        serveur.envoyer_id(payload.id)
+        serveur.envoyer_id(id_client)
     except OSError:
         raise HTTPException(status_code=503, detail="Serveur de facturation injoignable")
-    return {"id": payload.id, "statut": "envoyé"}
+    return {"id": id_client, "statut": "envoyé"}
 
+# Exemple http://localhost:8000/cantine/45215252813
